@@ -1,0 +1,23 @@
+cabal-version:      2.4
+name:               haskell-rest-api
+version:            0.1.0.0
+synopsis:           A simple REST API example in Haskell
+description:        Learn Haskell by building a simple REST API with Scotty
+license:            MIT
+author:             Claude
+maintainer:         example@example.com
+category:           Web
+extra-source-files: README.md
+
+executable haskell-rest-api
+    main-is:          Main.hs
+    hs-source-dirs:   app
+    build-depends:    base >=4.17 && <5
+                    , scotty
+                    , aeson
+                    , text
+                    , random
+                    , wai
+                    , warp
+    default-language: Haskell2010
+    ghc-options:      -threaded -rtsopts -with-rtsopts=-N
