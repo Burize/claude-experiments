@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 -- Main module for our REST API
 module Main where
@@ -6,11 +7,18 @@ module Main where
 -- Import Scotty web framework
 import Web.Scotty
 
--- Import for JSON encoding
-import Data.Aeson (object, (.=))
+-- Import HTTP status codes
+import Network.HTTP.Types.Status (status200)
+
+-- Import for JSON encoding and decoding
+import Data.Aeson (FromJSON, ToJSON, object, (.=))
+
+-- Import for automatic JSON deriving
+import GHC.Generics
 
 -- Import for text handling
 import qualified Data.Text.Lazy as TL
+import qualified Data.Text.Lazy.IO as TLIO
 
 -- Import for random generation
 import System.Random
@@ -19,7 +27,8 @@ import System.Random
 main :: IO ()
 main = do
     putStrLn "Starting Haskell REST API server on port 3000..."
-    putStrLn "Try: curl http://localhost:3000/api/strings"
+    putStrLn "GET endpoint: curl http://localhost:3000/api/strings"
+    putStrLn "POST endpoint: curl -X POST http://localhost:3000/api/items -H 'Content-Type: application/json' -d '{\"item\":\"test\"}'"
 
     -- Start Scotty web server on port 3000
     scotty 3000 $ do
@@ -30,6 +39,28 @@ main = do
 
             -- Return JSON response
             json $ object [ "strings" .= randomStrings ]
+
+        -- Define a POST route at /api/items
+        post "/api/items" $ do
+            -- Parse the JSON body
+            itemRequest <- jsonData :: ActionM ItemRequest
+
+            -- Log the received item to console
+            liftAndCatchIO $ putStrLn $ "Received item: " ++ item itemRequest
+
+            -- Return 200 status with OK message
+            status status200
+            json $ object [ "message" .= ("OK" :: String) ]
+
+-- Data type for POST request body
+-- This represents the JSON structure: { "item": "some value" }
+data ItemRequest = ItemRequest
+    { item :: String  -- The item field from the JSON body
+    } deriving (Show, Generic)
+
+-- Automatically derive JSON parsing for ItemRequest
+instance FromJSON ItemRequest
+instance ToJSON ItemRequest
 
 -- Function to generate a list of random strings
 generateRandomStrings :: IO [String]
