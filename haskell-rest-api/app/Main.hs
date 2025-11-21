@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE QuasiQuotes #-}
 
 -- Main module for our REST API
 module Main where
@@ -23,10 +24,25 @@ import qualified Data.Text.Lazy.IO as TLIO
 -- Import for random generation
 import System.Random
 
+-- Import PostgreSQL libraries
+import Database.PostgreSQL.Simple
+import Database.PostgreSQL.Simple.Types (Query(..))
+import qualified Data.ByteString.Char8 as BS
+
 -- Main entry point
 main :: IO ()
 main = do
     putStrLn "Starting Haskell REST API server on port 3000..."
+
+    -- Connect to PostgreSQL database
+    putStrLn "Connecting to PostgreSQL database..."
+    conn <- connectPostgreSQL "host=localhost dbname=haskell_api user=haskell_user password=haskell_pass"
+
+    -- Run database migrations
+    putStrLn "Running database migrations..."
+    runAppMigrations conn
+
+    putStrLn "Server ready!"
     putStrLn "GET endpoint: curl http://localhost:3000/api/strings"
     putStrLn "POST endpoint: curl -X POST http://localhost:3000/api/items -H 'Content-Type: application/json' -d '{\"item\":\"test\"}'"
 
@@ -35,7 +51,7 @@ main = do
         -- Define a GET route at /api/strings
         get "/api/strings" $ do
             -- Generate random strings
-            randomStrings <- liftAndCatchIO generateRandomStrings
+            randomStrings <- liftIO generateRandomStrings
 
             -- Return JSON response
             json $ object [ "strings" .= randomStrings ]
@@ -46,7 +62,10 @@ main = do
             itemRequest <- jsonData :: ActionM ItemRequest
 
             -- Log the received item to console
-            liftAndCatchIO $ putStrLn $ "Received item: " ++ item itemRequest
+            liftIO $ putStrLn $ "Received item: " ++ item itemRequest
+
+            -- Save to database
+            liftIO $ saveItemToDatabase conn (item itemRequest)
 
             -- Return 200 status with OK message
             status status200
@@ -91,3 +110,30 @@ generateInfiniteStrings gen =
         -- Map indices to words
         randomWords = map (words' !!) randomIndices
     in randomWords
+
+-- Run database migrations
+-- This creates the "requests" table if it doesn't exist
+runAppMigrations :: Connection -> IO ()
+runAppMigrations conn = do
+    -- Create the requests table if it doesn't exist
+    _ <- execute_ conn $ fromString createRequestsTableSQL
+    putStrLn "[OK] Database migration completed successfully"
+    where
+        fromString = Query . BS.pack
+
+-- SQL to create the requests table
+createRequestsTableSQL :: String
+createRequestsTableSQL = unlines
+    [ "CREATE TABLE IF NOT EXISTS requests ("
+    , "  id SERIAL PRIMARY KEY,"
+    , "  item TEXT NOT NULL,"
+    , "  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+    , ");"
+    ]
+
+-- Save an item to the database
+saveItemToDatabase :: Connection -> String -> IO ()
+saveItemToDatabase conn itemValue = do
+    _ <- execute conn "INSERT INTO requests (item) VALUES (?)" (Only itemValue)
+    putStrLn $ "[OK] Saved to database: " ++ itemValue
+    return ()
