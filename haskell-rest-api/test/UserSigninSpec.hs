@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
 
 module UserSigninSpec (spec) where
 
@@ -12,9 +13,9 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy as LBS
 import Control.Monad.Logger (runStdoutLoggingT)
 import Control.Monad.IO.Class (liftIO)
-import Database.Persist.Postgresql (withPostgresqlPool, runSqlPersistMPool, deleteWhere)
+import Database.Persist.Postgresql (withPostgresqlPool, runSqlPersistMPool, deleteWhere, Filter)
 
-import Main
+import App
 import Network.Wai (Application)
 import Web.Scotty (scottyApp)
 
@@ -82,7 +83,7 @@ spec = around withTestApp $ do
                                     ]
 
             post "/user/signin" signinData `shouldRespondWith`
-                [json|{error: "Username or password is incorrect"}|]
+                [json|{"error": "Username or password is incorrect"}|]
                 { matchStatus = 401 }
 
         it "should return 401 for non-existent username" $ do
@@ -91,7 +92,7 @@ spec = around withTestApp $ do
                                     ]
 
             post "/user/signin" signinData `shouldRespondWith`
-                [json|{error: "Username or password is incorrect"}|]
+                [json|{"error": "Username or password is incorrect"}|]
                 { matchStatus = 401 }
 
         it "should create a session token on successful signin" $ do

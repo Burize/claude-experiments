@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
 
 module UserMeSpec (spec) where
 
@@ -15,9 +16,9 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Text as T
 import Control.Monad.Logger (runStdoutLoggingT)
 import Control.Monad.IO.Class (liftIO)
-import Database.Persist.Postgresql (withPostgresqlPool, runSqlPersistMPool, deleteWhere)
+import Database.Persist.Postgresql (withPostgresqlPool, runSqlPersistMPool, deleteWhere, Filter)
 
-import Main
+import App
 import Network.Wai (Application)
 import Web.Scotty (scottyApp)
 
@@ -93,18 +94,18 @@ spec = around withTestApp $ do
 
         it "should return 401 when no Authorization header is provided" $ do
             get "/user/me" `shouldRespondWith`
-                [json|{error: "No session token provided"}|]
+                [json|{"error": "No session token provided"}|]
                 { matchStatus = 401 }
 
         it "should return 401 when Authorization header contains invalid token" $ do
             let invalidToken = "invalid-token-12345"
             request "GET" "/user/me" [(hAuthorization, BS.pack invalidToken)] "" `shouldRespondWith`
-                [json|{error: "Invalid or expired session token"}|]
+                [json|{"error": "Invalid or expired session token"}|]
                 { matchStatus = 401 }
 
         it "should return 401 when Authorization header is empty" $ do
             request "GET" "/user/me" [(hAuthorization, "")] "" `shouldRespondWith`
-                [json|{error: "Invalid or expired session token"}|]
+                [json|{"error": "Invalid or expired session token"}|]
                 { matchStatus = 401 }
 
         it "should work for different users with different tokens" $ do

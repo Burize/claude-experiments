@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
 
 module UserSignupSpec (spec) where
 
@@ -11,9 +12,9 @@ import Data.Aeson (object, (.=))
 import qualified Data.ByteString.Char8 as BS
 import Control.Monad.Logger (runStdoutLoggingT)
 import Control.Monad.IO.Class (liftIO)
-import Database.Persist.Postgresql (withPostgresqlPool, runSqlPersistMPool, deleteWhere)
+import Database.Persist.Postgresql (withPostgresqlPool, runSqlPersistMPool, deleteWhere, Filter)
 
-import Main
+import App
 import Network.Wai (Application)
 import Web.Scotty (scottyApp)
 
@@ -47,7 +48,7 @@ spec = around withTestApp $ do
                                     ]
 
             post "/user/signup" signupData `shouldRespondWith`
-                [json|{message: "User created successfully"}|]
+                [json|{"message": "User created successfully"}|]
                 { matchStatus = 200 }
 
         it "should create multiple users with different usernames" $ do
@@ -59,11 +60,11 @@ spec = around withTestApp $ do
                                ]
 
             post "/user/signup" user1 `shouldRespondWith`
-                [json|{message: "User created successfully"}|]
+                [json|{"message": "User created successfully"}|]
                 { matchStatus = 200 }
 
             post "/user/signup" user2 `shouldRespondWith`
-                [json|{message: "User created successfully"}|]
+                [json|{"message": "User created successfully"}|]
                 { matchStatus = 200 }
 
         it "should handle signup with empty password" $ do
@@ -72,7 +73,7 @@ spec = around withTestApp $ do
                                     ]
 
             post "/user/signup" signupData `shouldRespondWith`
-                [json|{message: "User created successfully"}|]
+                [json|{"message": "User created successfully"}|]
                 { matchStatus = 200 }
 
         it "should handle signup with special characters in username" $ do
@@ -81,7 +82,7 @@ spec = around withTestApp $ do
                                     ]
 
             post "/user/signup" signupData `shouldRespondWith`
-                [json|{message: "User created successfully"}|]
+                [json|{"message": "User created successfully"}|]
                 { matchStatus = 200 }
 
         it "should handle signup with long password" $ do
@@ -91,5 +92,5 @@ spec = around withTestApp $ do
                                     ]
 
             post "/user/signup" signupData `shouldRespondWith`
-                [json|{message: "User created successfully"}|]
+                [json|{"message": "User created successfully"}|]
                 { matchStatus = 200 }

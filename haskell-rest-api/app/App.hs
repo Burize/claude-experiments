@@ -14,7 +14,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 
 -- Main module for our REST API
-module Main
+module App
     ( main
     , app
     , runAppMigrations
