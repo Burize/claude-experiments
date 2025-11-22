@@ -14,7 +14,17 @@
 {-# LANGUAGE FlexibleInstances #-}
 
 -- Main module for our REST API
-module Main where
+module Main
+    ( main
+    , app
+    , runAppMigrations
+    , ConnectionPool
+    , migrateAll
+    , User(..)
+    , Session(..)
+    , Request(..)
+    , EntityField(..)
+    ) where
 
 -- Import Scotty web framework
 import Web.Scotty
@@ -45,9 +55,10 @@ import Control.Monad.Trans.Resource (runResourceT, ResourceT)
 import qualified Data.ByteString.Char8 as BS
 
 -- Import for Argon2 password hashing
-import Crypto.KDF.Argon2 (hash, defaultOptions, Options(..), Variant(..))
+import qualified Crypto.KDF.Argon2 as Argon2
 import qualified Data.ByteString as B
 import Data.ByteArray.Encoding (convertToBase, Base(Base64))
+import Crypto.Error (CryptoFailable(..))
 
 -- Define database schema using Persistent
 -- This uses Template Haskell to generate database types and functions
@@ -90,90 +101,94 @@ main = do
         putStrLn "GET endpoint: curl http://localhost:3000/user/me -H 'Authorization: <session-token>'"
 
         -- Start Scotty web server on port 3000
-        scotty 3000 $ do
-            -- Define a GET route at /api/strings
-            get "/api/strings" $ do
-                -- Generate random strings
-                randomStrings <- liftIO generateRandomStrings
+        scotty 3000 $ app pool
 
-                -- Return JSON response
-                json $ object [ "strings" .= randomStrings ]
+-- Define the Scotty application
+app :: ConnectionPool -> ScottyM ()
+app pool = do
+    -- Define a GET route at /api/strings
+    get "/api/strings" $ do
+        -- Generate random strings
+        randomStrings <- liftIO generateRandomStrings
 
-            -- Define a POST route at /api/items
-            post "/api/items" $ do
-                -- Parse the JSON body
-                itemRequest <- jsonData :: ActionM ItemRequest
+        -- Return JSON response
+        json $ object [ "strings" .= randomStrings ]
 
-                -- Log the received item to console
-                liftIO $ putStrLn $ "Received item: " ++ item itemRequest
+    -- Define a POST route at /api/items
+    post "/api/items" $ do
+        -- Parse the JSON body
+        itemRequest <- jsonData :: ActionM ItemRequest
 
-                -- Save to database using Persistent
-                liftIO $ saveItemToDatabase pool (item itemRequest)
+        -- Log the received item to console
+        liftIO $ putStrLn $ "Received item: " ++ item itemRequest
 
-                -- Return 200 status with OK message
-                status status200
-                json $ object [ "message" .= ("OK" :: String) ]
+        -- Save to database using Persistent
+        liftIO $ saveItemToDatabase pool (item itemRequest)
 
-            -- Define a POST route at /user/signup
-            post "/user/signup" $ do
-                -- Parse the JSON body
-                signupRequest <- jsonData :: ActionM SignupRequest
+        -- Return 200 status with OK message
+        status status200
+        json $ object [ "message" .= ("OK" :: String) ]
 
-                -- Log the received signup request
-                liftIO $ putStrLn $ "Received signup request for username: " ++ username signupRequest
+    -- Define a POST route at /user/signup
+    post "/user/signup" $ do
+        -- Parse the JSON body
+        signupRequest <- jsonData :: ActionM SignupRequest
 
-                -- Save user to database with hashed password
-                liftIO $ saveUserToDatabase pool (username signupRequest) (password signupRequest)
+        -- Log the received signup request
+        liftIO $ putStrLn $ "Received signup request for username: " ++ username signupRequest
 
-                -- Return 200 status with success message
-                status status200
-                json $ object [ "message" .= ("User created successfully" :: String) ]
+        -- Save user to database with hashed password
+        liftIO $ saveUserToDatabase pool (username signupRequest) (password signupRequest)
 
-            -- Define a POST route at /user/signin
-            post "/user/signin" $ do
-                -- Parse the JSON body
-                signinRequest <- jsonData :: ActionM SigninRequest
+        -- Return 200 status with success message
+        status status200
+        json $ object [ "message" .= ("User created successfully" :: String) ]
 
-                -- Log the received signin request
-                liftIO $ putStrLn $ "Received signin request for username: " ++ signinUsername signinRequest
+    -- Define a POST route at /user/signin
+    post "/user/signin" $ do
+        -- Parse the JSON body
+        signinRequest <- jsonData :: ActionM SigninRequest
 
-                -- Verify user credentials
-                isValid <- liftIO $ verifyUserCredentials pool (signinUsername signinRequest) (signinPassword signinRequest)
+        -- Log the received signin request
+        liftIO $ putStrLn $ "Received signin request for username: " ++ signinUsername signinRequest
 
-                if isValid
-                    then do
-                        -- Credentials are valid, create a session
-                        sessionToken <- liftIO $ createSession pool (signinUsername signinRequest)
-                        case sessionToken of
-                            Just token -> do
-                                status status200
-                                json $ object [ "message" .= ("Sign in successful" :: String)
-                                              , "sessionToken" .= token ]
-                            Nothing -> do
-                                status status401
-                                json $ object [ "error" .= ("Failed to create session" :: String) ]
-                    else do
-                        -- Credentials are invalid, return 401
+        -- Verify user credentials
+        isValid <- liftIO $ verifyUserCredentials pool (signinUsername signinRequest) (signinPassword signinRequest)
+
+        if isValid
+            then do
+                -- Credentials are valid, create a session
+                sessionToken <- liftIO $ createSession pool (signinUsername signinRequest)
+                case sessionToken of
+                    Just token -> do
+                        status status200
+                        json $ object [ "message" .= ("Sign in successful" :: String)
+                                      , "sessionToken" .= token ]
+                    Nothing -> do
                         status status401
-                        json $ object [ "error" .= ("Username or password is incorrect" :: String) ]
+                        json $ object [ "error" .= ("Failed to create session" :: String) ]
+            else do
+                -- Credentials are invalid, return 401
+                status status401
+                json $ object [ "error" .= ("Username or password is incorrect" :: String) ]
 
-            -- Define a GET route at /user/protected
-            get "/user/protected" $ do
-                -- Require authentication (returns user ID or responds with 401)
-                _ <- requireAuth pool
+    -- Define a GET route at /user/protected
+    get "/user/protected" $ do
+        -- Require authentication (returns user ID or responds with 401)
+        _ <- requireAuth pool
 
-                -- Valid session, return OK
-                status status200
-                text "OK"
+        -- Valid session, return OK
+        status status200
+        text "OK"
 
-            -- Define a GET route at /user/me
-            get "/user/me" $ do
-                -- Require authentication (returns user ID or responds with 401)
-                userId <- requireAuth pool
+    -- Define a GET route at /user/me
+    get "/user/me" $ do
+        -- Require authentication (returns user ID or responds with 401)
+        userId <- requireAuth pool
 
-                -- Return the user ID
-                status status200
-                json $ object [ "userId" .= show (unUserKey userId) ]
+        -- Return the user ID
+        status status200
+        json $ object [ "userId" .= show (unUserKey userId) ]
 
 -- Data type for POST request body
 -- This represents the JSON structure: { "item": "some value" }
@@ -204,11 +219,7 @@ data SigninRequest = SigninRequest
     } deriving (Show, Generic)
 
 -- Automatically derive JSON parsing for SigninRequest
-instance FromJSON SigninRequest where
-    parseJSON = withObject "SigninRequest" $ \v -> SigninRequest
-        <$> v .: "username"
-        <*> v .: "password"
-
+instance FromJSON SigninRequest
 instance ToJSON SigninRequest
 
 -- Function to generate a list of random strings
@@ -262,8 +273,10 @@ hashPassword :: String -> IO String
 hashPassword pwd = do
     let pwdBytes = BS.pack pwd
     let salt = BS.pack "somesalt12345678"  -- In production, use a random salt per user
-    let hashedBytes = hash defaultOptions pwdBytes salt 32
-    return $ BS.unpack $ convertToBase Base64 hashedBytes
+    let hashedResult = Argon2.hash Argon2.defaultOptions pwdBytes salt 32 :: CryptoFailable B.ByteString
+    case hashedResult of
+        CryptoPassed hashedBytes -> return $ BS.unpack $ convertToBase Base64 hashedBytes
+        CryptoFailed err -> error $ "Password hashing failed: " ++ show err
 
 -- Verify a password against a stored hash using Argon2
 verifyPassword :: String -> String -> IO Bool
