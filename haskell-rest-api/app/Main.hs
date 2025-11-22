@@ -60,6 +60,11 @@ User
     username String
     password String
     deriving Show
+
+Session
+    token String
+    userId UserId
+    deriving Show
 |]
 
 -- Main entry point
@@ -81,6 +86,7 @@ main = do
         putStrLn "POST endpoint: curl -X POST http://localhost:3000/api/items -H 'Content-Type: application/json' -d '{\"item\":\"test\"}'"
         putStrLn "POST endpoint: curl -X POST http://localhost:3000/user/signup -H 'Content-Type: application/json' -d '{\"username\":\"testuser\",\"password\":\"testpass\"}'"
         putStrLn "POST endpoint: curl -X POST http://localhost:3000/user/signin -H 'Content-Type: application/json' -d '{\"username\":\"testuser\",\"password\":\"testpass\"}'"
+        putStrLn "GET endpoint: curl http://localhost:3000/user/protected -H 'Authorization: <session-token>'"
 
         -- Start Scotty web server on port 3000
         scotty 3000 $ do
@@ -135,13 +141,44 @@ main = do
 
                 if isValid
                     then do
-                        -- Credentials are valid, return 200
-                        status status200
-                        json $ object [ "message" .= ("Sign in successful" :: String) ]
+                        -- Credentials are valid, create a session
+                        sessionToken <- liftIO $ createSession pool (signinUsername signinRequest)
+                        case sessionToken of
+                            Just token -> do
+                                status status200
+                                json $ object [ "message" .= ("Sign in successful" :: String)
+                                              , "sessionToken" .= token ]
+                            Nothing -> do
+                                status status401
+                                json $ object [ "error" .= ("Failed to create session" :: String) ]
                     else do
                         -- Credentials are invalid, return 401
                         status status401
                         json $ object [ "error" .= ("Username or password is incorrect" :: String) ]
+
+            -- Define a GET route at /user/protected
+            get "/user/protected" $ do
+                -- Get the session token from the Authorization header
+                authHeader <- header "Authorization"
+
+                case authHeader of
+                    Nothing -> do
+                        -- No Authorization header provided
+                        status status401
+                        json $ object [ "error" .= ("No session token provided" :: String) ]
+                    Just token -> do
+                        -- Validate the session token
+                        userId <- liftIO $ validateSession pool (TL.unpack token)
+
+                        case userId of
+                            Nothing -> do
+                                -- Invalid session token
+                                status status401
+                                json $ object [ "error" .= ("Invalid or expired session token" :: String) ]
+                            Just _ -> do
+                                -- Valid session, return OK
+                                status status200
+                                text "OK"
 
 -- Data type for POST request body
 -- This represents the JSON structure: { "item": "some value" }
@@ -262,3 +299,40 @@ verifyUserCredentials pool username pwd = do
         ((Entity _ user):_) -> do
             -- User found, verify password
             verifyPassword pwd (userPassword user)
+
+-- Generate a random session token
+generateSessionToken :: IO String
+generateSessionToken = do
+    gen <- newStdGen
+    let tokenLength = 32
+    let chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    let randomIndices = take tokenLength $ randomRs (0, length chars - 1) gen
+    return $ map (chars !!) randomIndices
+
+-- Create a new session for a user and return the session token
+createSession :: ConnectionPool -> String -> IO (Maybe String)
+createSession pool username = do
+    -- Find the user by username
+    users <- flip runSqlPersistMPool pool $ selectList [UserUsername ==. username] []
+
+    case users of
+        [] -> return Nothing  -- User not found
+        ((Entity userId _):_) -> do
+            -- Generate a session token
+            token <- generateSessionToken
+
+            -- Save the session to database
+            _ <- flip runSqlPersistMPool pool $ insert $ Session token userId
+
+            putStrLn $ "[OK] Created session for user: " ++ username
+            return $ Just token
+
+-- Validate a session token and return the user ID if valid
+validateSession :: ConnectionPool -> String -> IO (Maybe UserId)
+validateSession pool token = do
+    -- Query the database for a session with the given token
+    sessions <- flip runSqlPersistMPool pool $ selectList [SessionToken ==. token] []
+
+    case sessions of
+        [] -> return Nothing  -- Session not found
+        ((Entity _ session):_) -> return $ Just (sessionUserId session)
