@@ -87,6 +87,7 @@ main = do
         putStrLn "POST endpoint: curl -X POST http://localhost:3000/user/signup -H 'Content-Type: application/json' -d '{\"username\":\"testuser\",\"password\":\"testpass\"}'"
         putStrLn "POST endpoint: curl -X POST http://localhost:3000/user/signin -H 'Content-Type: application/json' -d '{\"username\":\"testuser\",\"password\":\"testpass\"}'"
         putStrLn "GET endpoint: curl http://localhost:3000/user/protected -H 'Authorization: <session-token>'"
+        putStrLn "GET endpoint: curl http://localhost:3000/user/me -H 'Authorization: <session-token>'"
 
         -- Start Scotty web server on port 3000
         scotty 3000 $ do
@@ -158,27 +159,21 @@ main = do
 
             -- Define a GET route at /user/protected
             get "/user/protected" $ do
-                -- Get the session token from the Authorization header
-                authHeader <- header "Authorization"
+                -- Require authentication (returns user ID or responds with 401)
+                _ <- requireAuth pool
 
-                case authHeader of
-                    Nothing -> do
-                        -- No Authorization header provided
-                        status status401
-                        json $ object [ "error" .= ("No session token provided" :: String) ]
-                    Just token -> do
-                        -- Validate the session token
-                        userId <- liftIO $ validateSession pool (TL.unpack token)
+                -- Valid session, return OK
+                status status200
+                text "OK"
 
-                        case userId of
-                            Nothing -> do
-                                -- Invalid session token
-                                status status401
-                                json $ object [ "error" .= ("Invalid or expired session token" :: String) ]
-                            Just _ -> do
-                                -- Valid session, return OK
-                                status status200
-                                text "OK"
+            -- Define a GET route at /user/me
+            get "/user/me" $ do
+                -- Require authentication (returns user ID or responds with 401)
+                userId <- requireAuth pool
+
+                -- Return the user ID
+                status status200
+                json $ object [ "userId" .= show (unUserKey userId) ]
 
 -- Data type for POST request body
 -- This represents the JSON structure: { "item": "some value" }
@@ -336,3 +331,28 @@ validateSession pool token = do
     case sessions of
         [] -> return Nothing  -- Session not found
         ((Entity _ session):_) -> return $ Just (sessionUserId session)
+
+-- Helper function to require authentication in a route
+-- Returns the authenticated user ID or responds with 401 and halts execution
+requireAuth :: ConnectionPool -> ActionM UserId
+requireAuth pool = do
+    -- Get the session token from the Authorization header
+    authHeader <- header "Authorization"
+
+    case authHeader of
+        Nothing -> do
+            -- No Authorization header provided
+            status status401
+            json $ object [ "error" .= ("No session token provided" :: String) ]
+            finish  -- Halt execution
+        Just token -> do
+            -- Validate the session token
+            userId <- liftIO $ validateSession pool (TL.unpack token)
+
+            case userId of
+                Nothing -> do
+                    -- Invalid session token
+                    status status401
+                    json $ object [ "error" .= ("Invalid or expired session token" :: String) ]
+                    finish  -- Halt execution
+                Just uid -> return uid  -- Return the authenticated user ID
