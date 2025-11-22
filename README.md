@@ -218,7 +218,7 @@ curl http://localhost:3000/user/me \
 
 ```bash
 git clone <repository-url>
-cd haskell-rest-api
+cd claude-experiments
 ```
 
 ### 2. Set Up the Database
@@ -302,7 +302,7 @@ Tests automatically set up and clean up the database for each test run.
 ## Project Structure
 
 ```
-haskell-rest-api/
+.
 ├── app/
 │   └── App.hs              # Main application module
 │                           # - Route definitions
@@ -320,6 +320,7 @@ haskell-rest-api/
 │
 ├── haskell-rest-api.cabal  # Build configuration
 ├── docker-compose.yml      # PostgreSQL container setup
+├── .gitignore              # Git ignore patterns
 └── README.md               # This file
 ```
 
