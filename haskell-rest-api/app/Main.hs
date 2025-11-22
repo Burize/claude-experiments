@@ -20,10 +20,10 @@ module Main where
 import Web.Scotty
 
 -- Import HTTP status codes
-import Network.HTTP.Types.Status (status200)
+import Network.HTTP.Types.Status (status200, status401)
 
 -- Import for JSON encoding and decoding
-import Data.Aeson (FromJSON, ToJSON, object, (.=))
+import Data.Aeson (FromJSON, ToJSON, object, (.=), withObject, (.:))
 
 -- Import for automatic JSON deriving
 import GHC.Generics
@@ -80,6 +80,7 @@ main = do
         putStrLn "GET endpoint: curl http://localhost:3000/api/strings"
         putStrLn "POST endpoint: curl -X POST http://localhost:3000/api/items -H 'Content-Type: application/json' -d '{\"item\":\"test\"}'"
         putStrLn "POST endpoint: curl -X POST http://localhost:3000/user/signup -H 'Content-Type: application/json' -d '{\"username\":\"testuser\",\"password\":\"testpass\"}'"
+        putStrLn "POST endpoint: curl -X POST http://localhost:3000/user/signin -H 'Content-Type: application/json' -d '{\"username\":\"testuser\",\"password\":\"testpass\"}'"
 
         -- Start Scotty web server on port 3000
         scotty 3000 $ do
@@ -121,6 +122,27 @@ main = do
                 status status200
                 json $ object [ "message" .= ("User created successfully" :: String) ]
 
+            -- Define a POST route at /user/signin
+            post "/user/signin" $ do
+                -- Parse the JSON body
+                signinRequest <- jsonData :: ActionM SigninRequest
+
+                -- Log the received signin request
+                liftIO $ putStrLn $ "Received signin request for username: " ++ signinUsername signinRequest
+
+                -- Verify user credentials
+                isValid <- liftIO $ verifyUserCredentials pool (signinUsername signinRequest) (signinPassword signinRequest)
+
+                if isValid
+                    then do
+                        -- Credentials are valid, return 200
+                        status status200
+                        json $ object [ "message" .= ("Sign in successful" :: String) ]
+                    else do
+                        -- Credentials are invalid, return 401
+                        status status401
+                        json $ object [ "error" .= ("Username or password is incorrect" :: String) ]
+
 -- Data type for POST request body
 -- This represents the JSON structure: { "item": "some value" }
 data ItemRequest = ItemRequest
@@ -141,6 +163,21 @@ data SignupRequest = SignupRequest
 -- Automatically derive JSON parsing for SignupRequest
 instance FromJSON SignupRequest
 instance ToJSON SignupRequest
+
+-- Data type for user signin request body
+-- This represents the JSON structure: { "username": "user", "password": "pass" }
+data SigninRequest = SigninRequest
+    { signinUsername :: String  -- The username field from the JSON body
+    , signinPassword :: String  -- The password field from the JSON body
+    } deriving (Show, Generic)
+
+-- Automatically derive JSON parsing for SigninRequest
+instance FromJSON SigninRequest where
+    parseJSON = withObject "SigninRequest" $ \v -> SigninRequest
+        <$> v .: "username"
+        <*> v .: "password"
+
+instance ToJSON SigninRequest
 
 -- Function to generate a list of random strings
 generateRandomStrings :: IO [String]
@@ -196,6 +233,14 @@ hashPassword pwd = do
     let hashedBytes = hash defaultOptions pwdBytes salt 32
     return $ BS.unpack $ convertToBase Base64 hashedBytes
 
+-- Verify a password against a stored hash using Argon2
+verifyPassword :: String -> String -> IO Bool
+verifyPassword pwd storedHash = do
+    -- Hash the provided password
+    hashedPwd <- hashPassword pwd
+    -- Compare with stored hash
+    return $ hashedPwd == storedHash
+
 -- Save a user to the database with hashed password
 saveUserToDatabase :: ConnectionPool -> String -> String -> IO ()
 saveUserToDatabase pool username pwd = do
@@ -205,3 +250,15 @@ saveUserToDatabase pool username pwd = do
     -- Insert a new User entity into the database
     _ <- flip runSqlPersistMPool pool $ insert $ User username hashedPassword
     putStrLn $ "[OK] Saved user to database: " ++ username
+
+-- Verify user credentials against the database
+verifyUserCredentials :: ConnectionPool -> String -> String -> IO Bool
+verifyUserCredentials pool username pwd = do
+    -- Query the database for a user with the given username
+    users <- flip runSqlPersistMPool pool $ selectList [UserUsername ==. username] []
+
+    case users of
+        [] -> return False  -- User not found
+        ((Entity _ user):_) -> do
+            -- User found, verify password
+            verifyPassword pwd (userPassword user)
