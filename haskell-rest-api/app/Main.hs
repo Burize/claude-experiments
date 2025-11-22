@@ -50,6 +50,11 @@ share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistLowerCase|
 Request
     item String
     deriving Show
+
+User
+    username String
+    password String
+    deriving Show
 |]
 
 -- Main entry point
