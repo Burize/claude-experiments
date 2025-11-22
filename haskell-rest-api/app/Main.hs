@@ -44,6 +44,11 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Resource (runResourceT, ResourceT)
 import qualified Data.ByteString.Char8 as BS
 
+-- Import for Argon2 password hashing
+import Crypto.KDF.Argon2 (hash, defaultOptions, Options(..), Variant(..))
+import qualified Data.ByteString as B
+import Data.ByteArray.Encoding (convertToBase, Base(Base64))
+
 -- Define database schema using Persistent
 -- This uses Template Haskell to generate database types and functions
 share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistLowerCase|
@@ -74,6 +79,7 @@ main = do
         putStrLn "Server ready!"
         putStrLn "GET endpoint: curl http://localhost:3000/api/strings"
         putStrLn "POST endpoint: curl -X POST http://localhost:3000/api/items -H 'Content-Type: application/json' -d '{\"item\":\"test\"}'"
+        putStrLn "POST endpoint: curl -X POST http://localhost:3000/user/signup -H 'Content-Type: application/json' -d '{\"username\":\"testuser\",\"password\":\"testpass\"}'"
 
         -- Start Scotty web server on port 3000
         scotty 3000 $ do
@@ -100,6 +106,21 @@ main = do
                 status status200
                 json $ object [ "message" .= ("OK" :: String) ]
 
+            -- Define a POST route at /user/signup
+            post "/user/signup" $ do
+                -- Parse the JSON body
+                signupRequest <- jsonData :: ActionM SignupRequest
+
+                -- Log the received signup request
+                liftIO $ putStrLn $ "Received signup request for username: " ++ username signupRequest
+
+                -- Save user to database with hashed password
+                liftIO $ saveUserToDatabase pool (username signupRequest) (password signupRequest)
+
+                -- Return 200 status with success message
+                status status200
+                json $ object [ "message" .= ("User created successfully" :: String) ]
+
 -- Data type for POST request body
 -- This represents the JSON structure: { "item": "some value" }
 data ItemRequest = ItemRequest
@@ -109,6 +130,17 @@ data ItemRequest = ItemRequest
 -- Automatically derive JSON parsing for ItemRequest
 instance FromJSON ItemRequest
 instance ToJSON ItemRequest
+
+-- Data type for user signup request body
+-- This represents the JSON structure: { "username": "user", "password": "pass" }
+data SignupRequest = SignupRequest
+    { username :: String  -- The username field from the JSON body
+    , password :: String  -- The password field from the JSON body
+    } deriving (Show, Generic)
+
+-- Automatically derive JSON parsing for SignupRequest
+instance FromJSON SignupRequest
+instance ToJSON SignupRequest
 
 -- Function to generate a list of random strings
 generateRandomStrings :: IO [String]
@@ -155,3 +187,21 @@ saveItemToDatabase pool itemValue = do
     -- Insert a new Request entity into the database
     _ <- flip runSqlPersistMPool pool $ insert $ Request itemValue
     putStrLn $ "[OK] Saved to database: " ++ itemValue
+
+-- Hash a password using Argon2
+hashPassword :: String -> IO String
+hashPassword pwd = do
+    let pwdBytes = BS.pack pwd
+    let salt = BS.pack "somesalt12345678"  -- In production, use a random salt per user
+    let hashedBytes = hash defaultOptions pwdBytes salt 32
+    return $ BS.unpack $ convertToBase Base64 hashedBytes
+
+-- Save a user to the database with hashed password
+saveUserToDatabase :: ConnectionPool -> String -> String -> IO ()
+saveUserToDatabase pool username pwd = do
+    -- Hash the password
+    hashedPassword <- hashPassword pwd
+
+    -- Insert a new User entity into the database
+    _ <- flip runSqlPersistMPool pool $ insert $ User username hashedPassword
+    putStrLn $ "[OK] Saved user to database: " ++ username
