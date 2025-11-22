@@ -6,10 +6,10 @@ module UserMeSpec (spec) where
 import Test.Hspec
 import Test.Hspec.Wai
 import Test.Hspec.Wai.JSON
-import Network.Wai.Test (SResponse, simpleBody)
+import Network.Wai.Test (SResponse, simpleBody, simpleStatus)
 import Network.HTTP.Types.Status (status200, status401)
 import Network.HTTP.Types.Header (hAuthorization)
-import Data.Aeson (object, (.=), decode, Value(..))
+import Data.Aeson (object, (.=), decode, Value(..), encode)
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy as LBS
@@ -23,25 +23,23 @@ import Network.Wai (Application)
 import Web.Scotty (scottyApp)
 
 -- Helper to create test application with database cleanup
-withTestApp :: (Application -> IO ()) -> IO ()
-withTestApp action = do
+testApp :: IO Application
+testApp = do
     let connStr = "host=localhost dbname=haskell_api user=haskell_user password=haskell_pass"
     runStdoutLoggingT $ withPostgresqlPool (BS.pack connStr) 10 $ \pool -> liftIO $ do
         -- Run migrations
         runAppMigrations pool
 
         -- Clean up test data before each test
+        -- Note: Delete sessions first since they have foreign key to users
         runSqlPersistMPool (do
-            deleteWhere ([] :: [Filter User])
             deleteWhere ([] :: [Filter Session])
+            deleteWhere ([] :: [Filter User])
             deleteWhere ([] :: [Filter Request])
             ) pool
 
         -- Create WAI application
-        testApp <- scottyApp (app pool)
-
-        -- Run the test action
-        action testApp
+        scottyApp (app pool)
 
 -- Helper to extract session token from signin response
 extractSessionToken :: SResponse -> IO (Maybe String)
@@ -55,20 +53,20 @@ extractSessionToken response = do
         _ -> Nothing
 
 spec :: Spec
-spec = around withTestApp $ do
+spec = with testApp $ do
     describe "GET /user/me" $ do
         it "should return user ID when authenticated with valid token" $ do
             -- Sign up a user
             let signupData = object [ "username" .= ("meuser" :: String)
                                     , "password" .= ("mepass" :: String)
                                     ]
-            _ <- post "/user/signup" signupData
+            _ <- post "/user/signup" (encode signupData)
 
             -- Sign in to get session token
             let signinData = object [ "username" .= ("meuser" :: String)
                                     , "password" .= ("mepass" :: String)
                                     ]
-            signinResponse <- post "/user/signin" signinData
+            signinResponse <- post "/user/signin" (encode signinData)
 
             maybeToken <- liftIO $ extractSessionToken signinResponse
 
@@ -113,24 +111,24 @@ spec = around withTestApp $ do
             let user1Signup = object [ "username" .= ("user1" :: String)
                                      , "password" .= ("pass1" :: String)
                                      ]
-            _ <- post "/user/signup" user1Signup
+            _ <- post "/user/signup" (encode user1Signup)
 
             let user1Signin = object [ "username" .= ("user1" :: String)
                                      , "password" .= ("pass1" :: String)
                                      ]
-            user1SigninResponse <- post "/user/signin" user1Signin
+            user1SigninResponse <- post "/user/signin" (encode user1Signin)
             maybeToken1 <- liftIO $ extractSessionToken user1SigninResponse
 
             -- Create second user
             let user2Signup = object [ "username" .= ("user2" :: String)
                                      , "password" .= ("pass2" :: String)
                                      ]
-            _ <- post "/user/signup" user2Signup
+            _ <- post "/user/signup" (encode user2Signup)
 
             let user2Signin = object [ "username" .= ("user2" :: String)
                                      , "password" .= ("pass2" :: String)
                                      ]
-            user2SigninResponse <- post "/user/signin" user2Signin
+            user2SigninResponse <- post "/user/signin" (encode user2Signin)
             maybeToken2 <- liftIO $ extractSessionToken user2SigninResponse
 
             -- Verify both tokens work
@@ -155,12 +153,12 @@ spec = around withTestApp $ do
             let signupData = object [ "username" .= ("persistuser" :: String)
                                     , "password" .= ("persistpass" :: String)
                                     ]
-            _ <- post "/user/signup" signupData
+            _ <- post "/user/signup" (encode signupData)
 
             let signinData = object [ "username" .= ("persistuser" :: String)
                                     , "password" .= ("persistpass" :: String)
                                     ]
-            signinResponse <- post "/user/signin" signinData
+            signinResponse <- post "/user/signin" (encode signinData)
             maybeToken <- liftIO $ extractSessionToken signinResponse
 
             case maybeToken of

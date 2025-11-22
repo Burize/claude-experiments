@@ -6,9 +6,9 @@ module UserSigninSpec (spec) where
 import Test.Hspec
 import Test.Hspec.Wai
 import Test.Hspec.Wai.JSON
-import Network.Wai.Test (SResponse, simpleBody)
+import Network.Wai.Test (SResponse, simpleBody, simpleStatus)
 import Network.HTTP.Types.Status (status200, status401)
-import Data.Aeson (object, (.=), decode, Value)
+import Data.Aeson (object, (.=), decode, Value, encode)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy as LBS
 import Control.Monad.Logger (runStdoutLoggingT)
@@ -20,41 +20,39 @@ import Network.Wai (Application)
 import Web.Scotty (scottyApp)
 
 -- Helper to create test application with database cleanup
-withTestApp :: (Application -> IO ()) -> IO ()
-withTestApp action = do
+testApp :: IO Application
+testApp = do
     let connStr = "host=localhost dbname=haskell_api user=haskell_user password=haskell_pass"
     runStdoutLoggingT $ withPostgresqlPool (BS.pack connStr) 10 $ \pool -> liftIO $ do
         -- Run migrations
         runAppMigrations pool
 
         -- Clean up test data before each test
+        -- Note: Delete sessions first since they have foreign key to users
         runSqlPersistMPool (do
-            deleteWhere ([] :: [Filter User])
             deleteWhere ([] :: [Filter Session])
+            deleteWhere ([] :: [Filter User])
             deleteWhere ([] :: [Filter Request])
             ) pool
 
         -- Create WAI application
-        testApp <- scottyApp (app pool)
-
-        -- Run the test action
-        action testApp
+        scottyApp (app pool)
 
 spec :: Spec
-spec = around withTestApp $ do
+spec = with testApp $ do
     describe "POST /user/signin" $ do
         it "should sign in successfully with correct credentials" $ do
             -- First, sign up a user
             let signupData = object [ "username" .= ("testuser" :: String)
                                     , "password" .= ("testpass123" :: String)
                                     ]
-            _ <- post "/user/signup" signupData
+            _ <- post "/user/signup" (encode signupData)
 
             -- Then, sign in with the same credentials
             let signinData = object [ "username" .= ("testuser" :: String)
                                     , "password" .= ("testpass123" :: String)
                                     ]
-            response <- post "/user/signin" signinData
+            response <- post "/user/signin" (encode signinData)
 
             liftIO $ do
                 -- Verify status is 200
@@ -75,14 +73,14 @@ spec = around withTestApp $ do
             let signupData = object [ "username" .= ("testuser2" :: String)
                                     , "password" .= ("correctpass" :: String)
                                     ]
-            _ <- post "/user/signup" signupData
+            _ <- post "/user/signup" (encode signupData)
 
             -- Try to sign in with wrong password
             let signinData = object [ "username" .= ("testuser2" :: String)
                                     , "password" .= ("wrongpass" :: String)
                                     ]
 
-            post "/user/signin" signinData `shouldRespondWith`
+            post "/user/signin" (encode signinData) `shouldRespondWith`
                 [json|{"error": "Username or password is incorrect"}|]
                 { matchStatus = 401 }
 
@@ -91,7 +89,7 @@ spec = around withTestApp $ do
                                     , "password" .= ("anypass" :: String)
                                     ]
 
-            post "/user/signin" signinData `shouldRespondWith`
+            post "/user/signin" (encode signinData) `shouldRespondWith`
                 [json|{"error": "Username or password is incorrect"}|]
                 { matchStatus = 401 }
 
@@ -100,13 +98,13 @@ spec = around withTestApp $ do
             let signupData = object [ "username" .= ("tokenuser" :: String)
                                     , "password" .= ("tokenpass" :: String)
                                     ]
-            _ <- post "/user/signup" signupData
+            _ <- post "/user/signup" (encode signupData)
 
             -- Sign in and verify we get a session token
             let signinData = object [ "username" .= ("tokenuser" :: String)
                                     , "password" .= ("tokenpass" :: String)
                                     ]
-            response <- post "/user/signin" signinData
+            response <- post "/user/signin" (encode signinData)
 
             liftIO $ do
                 simpleStatus response `shouldBe` status200
@@ -119,15 +117,15 @@ spec = around withTestApp $ do
             let signupData = object [ "username" .= ("multiuser" :: String)
                                     , "password" .= ("multipass" :: String)
                                     ]
-            _ <- post "/user/signup" signupData
+            _ <- post "/user/signup" (encode signupData)
 
             -- Sign in multiple times
             let signinData = object [ "username" .= ("multiuser" :: String)
                                     , "password" .= ("multipass" :: String)
                                     ]
 
-            response1 <- post "/user/signin" signinData
-            response2 <- post "/user/signin" signinData
+            response1 <- post "/user/signin" (encode signinData)
+            response2 <- post "/user/signin" (encode signinData)
 
             liftIO $ do
                 simpleStatus response1 `shouldBe` status200
@@ -138,12 +136,12 @@ spec = around withTestApp $ do
             let signupData = object [ "username" .= ("emptypassuser" :: String)
                                     , "password" .= ("" :: String)
                                     ]
-            _ <- post "/user/signup" signupData
+            _ <- post "/user/signup" (encode signupData)
 
             -- Sign in with empty password
             let signinData = object [ "username" .= ("emptypassuser" :: String)
                                     , "password" .= ("" :: String)
                                     ]
 
-            response <- post "/user/signin" signinData
+            response <- post "/user/signin" (encode signinData)
             liftIO $ simpleStatus response `shouldBe` status200

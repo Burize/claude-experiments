@@ -33,7 +33,8 @@ import Web.Scotty
 import Network.HTTP.Types.Status (status200, status401)
 
 -- Import for JSON encoding and decoding
-import Data.Aeson (FromJSON, ToJSON, object, (.=), withObject, (.:))
+import Data.Aeson (FromJSON, ToJSON, object, (.=), withObject, (.:), parseJSON)
+import Control.Applicative ((<*>))
 
 -- Import for automatic JSON deriving
 import GHC.Generics
@@ -218,8 +219,12 @@ data SigninRequest = SigninRequest
     , signinPassword :: String  -- The password field from the JSON body
     } deriving (Show, Generic)
 
--- Automatically derive JSON parsing for SigninRequest
-instance FromJSON SigninRequest
+-- Custom JSON parsing for SigninRequest to map standard field names
+instance FromJSON SigninRequest where
+    parseJSON = withObject "SigninRequest" $ \v -> SigninRequest
+        <$> v .: "username"
+        <*> v .: "password"
+
 instance ToJSON SigninRequest
 
 -- Function to generate a list of random strings
